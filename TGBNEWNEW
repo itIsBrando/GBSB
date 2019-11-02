@@ -1,0 +1,3406 @@
+'
+'===================
+'      READ ME      
+'===================
+'
+' THIS IS A VERY MESSY CONGLOMERATION OF CODE
+' I HAVE NOT TESTED MANY ROMS
+' SCROLL DOWN TO THE TITLE 'LOAD ROM HERE'
+'   TO PUT YOUR ROM NAME
+
+' 8x16 SPRITES NEED TO BE ADDED
+' I DO NOT REMEMBER WHAT ELSE NEEDS TO BE ADDED
+'   PROBABLY SOME MBCs ARE NOT WORKING NOR SUPPORTED
+
+
+
+
+
+'THIS FILEWAS SAVED ON 10/6/19
+
+
+'                 TO-DO
+'F1 RACE THROWS A SUBSCRIPT ERROR FROM SETTING BANK TO 0xFF
+'LEGEND OF ZELDA DOESN'T SHOW ANYTHING AND HITS AN ILLEGAL STOP OPCODE
+'PKMN RED GETS UNIDENTIFED FUNC AFTER START MENU
+'ADD SPRITE PRIORITY
+'*ADD SPRITE PALETTES
+'*ADD FF04/TIMER REGISTER
+'*CONFIRM HALF CARRY WORKS WITH SUB
+'*FULLY ADD HALF CARRY
+'*ADD WINDOW
+'*ADD 8x16 SPRITES
+'*ADD SPRITE TRANSPARENCY
+'*ADD MORE OPS
+'*ADD &HFF41 REGS
+'*ADD YFLIP TO SPRITES
+'*PASS 3
+'*PASS 4
+'*PASS 7
+'*PASS 8
+'*PASS 9
+'*PASS 11
+
+'                  DONE
+'*PASS 1
+'*PASS 2
+'*PASS 5
+'*PASS 6
+'*PASS 10
+'*FIXED SWAP NOT PROPERLY SHIFTING THE LOWER NIB TO UPPER NIB
+'*FIX HALT NOT DISABLING
+'*FIX TETRIS NOT BEING ALLOW TO WRITE TO&HE000 AND &HFDFF
+'*FIX PUSH/POP AF
+'*FIX TETRIS NOT GETTING TO SECOND MENU
+'*WRITE OAM DISPLAYING ROUTINE
+'*SYNC BG DRAWING
+'*FIXED JUMPS/CALLS NOT HAVING ACCURATE CYCLES
+ACLS
+RANDOMIZE 0
+XSCREEN 3,0,0
+OPTION STRICT
+OPTION DEFINT
+
+'EMULATION VARIABLES
+VAR FRAME_SKIP = 1'6
+VAR TRACE$[16],T_IND
+
+DIM BRKPTS[0],STEPPC=0
+
+DIM GME[&H100000]
+DIM VRAM[&H2000]'8000-9FFF
+DIM SRAM[&H2000]'A000-BFFF (SWITCHABLE)
+DIM WRAM[&H2000]'C000-DFFF
+DIM HRAM[&H200]'FE00-FFFF
+
+DIM SCREEN[160,160]
+DIM PALETTE[4],BGPAL[4],OBJ0PAL[4],OBJ1PAL[4]
+
+VAR BUTTON1=&HF,BUTTON2=&HF
+
+VAR carry_flag,zero_flag,INTERRUPT_flag
+VAR hc_flag,sub_flag
+
+VAR PC,SP
+VAR A,B,D,H
+VAR F,C,E,L
+VAR AF,BC,DE,HL
+VAR lastZERO, lastCARRY
+
+VAR I%,OPCODE,CYCLE,TOTALCYCLE,B%,X,Y,LINE
+ 'isHALTED IS TERNARY
+'0 = DISABLED
+'1 = ENABLED
+'2 = INTERRUPT CALLED AND SHOULD BE DISABLED
+VAR isHALTED
+
+'PPU
+VAR gpuCLOCK,gpuMODE,gpuFRAMES
+
+'MBC
+VAR MBC_ROM_OFF=&H4000,MBC_ROMBANK
+VAR MBC_RAM_OFF,MBC_RAMBANK
+VAR MBC_RAM_ENABLE,MBC_MODE'0=ROM,1=RAM
+
+'03 TEST TAKES REALLY LONG TIME
+
+DATA &H3C,&H20,&HFF
+VAR SCANLINE_COUNTER=456,VBLANK
+PC = &H100
+AF = &H01B0
+BC = &H0013
+DE = &H00D8
+HL = &H014D
+SP = &HFFFE
+_16TO8
+VAR LB,CYCLESthisUPDATE,TIMER_COUNTER = 1024
+VAR TIMCONT=&HFF07,TIMECNT=&HFF05,DIVTIMER
+VAR TIMERCLOCK
+VAR TIMEMOD=&HFF06,LCDSTAT=&HFF41,TIMER
+
+VAR changeInterruptFlag
+
+SETUPPAL
+
+DEF SETUPPAL
+ VAR I
+ FOR I = 0TO 3
+  PALETTE[I] = RGB(I*85,I*85,I*85)
+ NEXT
+END
+
+VAR FILENAME$
+
+
+
+
+
+'===================
+'   LOAD ROM HERE   
+'===================
+
+
+
+'FILENAME$="TETRIS.GB":GME[&H38B]=2
+'FILENAME$="BOOT.BIN":PC=0
+'FILENAME$="DRMARIO.GB"
+'FILENAME$="F1RACE.GB"
+'FILENAME$="LOZLA.GB"
+'FILENAME$="PKMNRED.GB"
+'FILENAME$="PICROSS.GB"
+FILENAME$="KIRBY.GB"
+'FILENAME$="TENNIS.GB"
+'FILENAME$="SPIDER.GB"'COINEDIENCE FLG DOESNT WORK
+'FILENAME$="MARIO.GB"
+'FILENAME$="ALLEY.GB":MEM[&HFF40]=162
+'FILENAME$="06.GB"
+
+
+
+
+
+LOAD_ROM FILENAME$
+
+
+VAR MBC=GET(&H147)
+IF MBC==1 THEN
+ ?"MBC1
+ELSEIF MBC==2 THEN
+ ?"MBC1+RAM"
+ELSEIF MBC==3THEN
+ ?"MBC1+RAM+BATTERY"
+ELSEIF MBC!=0THEN
+ ?"MBC NOT SUPPORTED:",MBC
+' STOP
+ENDIF
+
+
+WRITE &HFF40,128
+
+'==========================
+'   ADD BREAKPOINTS HERE   
+'==========================
+
+'NEW_BREAKPOINT &H196
+
+
+
+WHILE 1
+ B%=BUTTON()
+ JOYPAD B%
+ IF changeInterruptFlag THEN
+  INTERRUPT_flag = 1
+  changeInterruptFlag = 0
+ ENDIF
+ IF B%==#L THEN REG    'PRINTS DEBUG REGISTERS
+ FETCH  'CPU
+ IF testBIT(GET(&HFF40),7)THEN GPUSTEP'GPU TIMING
+ incDIV 'DIV TIMER
+ TIMERS 'TIMER REGISTERS
+ BREAKPOINTS'LOOPS THROUGH BREAKPOINTS
+ CHK_INTERRUPT
+' IF (BC>>8 != B) OR (BC AND &HFF)!=C THEN ?"BC ERROR":STOP
+' IF (DE>>8 != D) OR (DE AND &HFF)!=E THEN ?"DE ERROR":STOP
+' IF (HL>>8 != H) OR (HL AND &HFF)!=L THEN ?"HL ERROR":STOP
+ INC TOTALCYCLE,CYCLE
+WEND
+
+DEF getClockFreq()
+ RETURN GET(&HFF07)AND 3
+END
+
+DEF setClockFreq
+  VAR FREQ=getClockFreq()
+  IF FREQ == 0 THEN
+   TIMER_COUNTER = 1024'FREQ 4096
+  ELSEIF FREQ==1THEN
+   TIMER_COUNTER = 16'FREQ 262144
+  ELSEIF FREQ==2THEN
+   TIMER_COUNTER = 64'FREQ 65536
+  ELSE TIMER_COUNTER = 256'FREQ 16384
+  ENDIF
+END
+
+DEF incDIV
+ INC TIMERCLOCK,CYCLE
+ IF TIMERCLOCK >= 64THEN
+  DEC TIMERCLOCK,64
+  DIVTIMER = (DIVTIMER+1) AND &HFF
+ ENDIF
+END
+
+DEF TIMERS
+ WRITE TIMEMOD,(GET(TIMEMOD) + CYCLE) AND &HFF
+ IF !testBIT(GET(TIMCONT),2)THEN RETURN
+ TIMER_COUNTER = TIMER_COUNTER-CYCLE
+ 
+ IF TIMER_COUNTER<=0 THEN 
+  setClockFreq
+  IF GET(TIMECNT) == 255THEN 'TIMER ABOUT TO OVERFLOW
+   WRITE TIMECNT,0
+   REQ_INTERRUPT 2
+  ELSE
+   WRITE TIMECNT,GET(TIMECNT)+1
+  ENDIF
+  
+ ENDIF
+END
+
+'ADD BETTER SUPPORT
+DEF JOYPAD BTN
+ 'BUTTON1=ABXY
+ 'BUTTON2=D-PAD
+ BTN = BTN AND &HFF
+ IF testBIT(GET(&HFFFF),4)AND (!(BUTTON1) OR !(BUTTON2))!=0 THEN REQ_INTERRUPT 4:STOP
+ IF BTN==0 THEN RETURN
+ BUTTON2 = (BTN>>4) XOR &HF'ABXY
+ BUTTON1 = (BTN AND &HF) XOR &HF'D-PAD
+END
+
+
+
+
+DEF GETPALETTE(V%)
+ DIM VALUE[4]
+ VAR I
+ FOR I=0 TO 3'GET PALETTE
+  VAR T = (V% AND (3<<(I<<1)) ) >> (I<<1)
+  T = ((NOT T)AND 3)
+  VALUE[I] = T
+ NEXT
+ RETURN VALUE
+END
+
+DEF DRAWTILEline PTR,X,Y,PAL,TRANS,yFLIPPED 'DRAWS A 8PIX TILE
+  VAR B1 = GET(PTR),B2 = GET(PTR+1),I,OFFSET
+  IF Y>=144THEN RETURN
+  FOR I = 0 TO 7
+   VAR COLORINDEX = testBIT(B1,I) OR (testBIT(B2,I)<<1)
+   IF yFLIPPED THEN OFFSET = I+X ELSE OFFSET = 7-I+X
+   VAR COL = PAL[COLORINDEX]
+   IF!(TRANS AND COL==0)AND OFFSET<159THEN
+    SCREEN[Y,OFFSET] = COL
+   ENDIF
+  NEXT I
+END
+
+DEF GPUSTEP
+ INC gpuCLOCK, CYCLE
+ 'HBLANK
+ IF gpuMODE == 0 THEN
+  IF gpuCLOCK >= 204 THEN
+   gpuCLOCK = gpuCLOCK - 204
+   WRITE &HFF44,GET(&HFF44)+1
+   IF GET(&HFF44) == 143THEN'HAPPENS ON 144TH SCANLINE
+    'END OF hblank, ENTERING VBLANK
+    REQ_INTERRUPT 0 'VBLANK
+    gpuMODE = 1
+   ELSE
+    gpuMODE = 2
+   ENDIF
+  ENDIF
+
+ ELSEIF gpuMODE == 1 THEN
+  'VBLANK
+  IF gpuCLOCK >= 456 THEN
+   gpuCLOCK = gpuCLOCK - 456
+   WRITE &HFF44,GET(&HFF44)+1
+   IF GET(&HFF44) > 153 THEN
+    'END OF V-BLANK
+    gpuMODE = 2
+    WRITE &HFF44,0
+    INC gpuFRAMES
+    IF gpuFRAMES >= FRAME_SKIP THEN GLOAD 118,47,160,144,SCREEN,PALETTE,1:gpuFRAMES=0
+   ENDIF
+  ENDIF
+
+ ELSEIF gpuMODE == 2 THEN
+  'OAM
+  IF gpuCLOCK >= 80THEN
+   gpuCLOCK = gpuCLOCK - 80
+   gpuMODE = 3
+  ENDIF
+
+ ELSEIF gpuMODE == 3 THEN
+  'VRAM READABLE
+  IF gpuCLOCK >= 172 THEN
+   gpuMODE = 0
+   gpuCLOCK = gpuCLOCK - 172
+   RENDERSCAN
+  ENDIF
+ ENDIF
+ 
+ IF GET(&HFF44)==GET(&HFF45)THEN
+  WRITE&HFF41,setbit(GET(&HFF41),2)
+  'COINCIDENCE FLAG
+ ELSE
+  WRITE&HFF41,resetbit(GET(&HFF41),2)
+ ENDIF
+END
+
+DEF RENDERSPRITE
+ VAR I,scanline = GET(&HFF44)
+ FOR I=0 TO 40
+ VAR ENTRYBASE = &HFE00+(I<<2)
+ VAR y = (GET(ENTRYBASE)-16)AND &HFF,x = (GET(ENTRYBASE+1)-8)AND &HFF
+ VAR FLAGS = GET(ENTRYBASE+3)
+ IF y<0 OR x<0OR x>168OR y>160 THEN CONTINUE
+ 'GETS THE ADDRESS OF THE TILE
+ VAR TILE = &H8000 + (GET(ENTRYBASE+2)<<4)
+ DIM SPR_PAL[4]
+ VAR BIG=testBIT(GET(&HFF40),2)
+ IF testBIT(FLAGS,3)THEN COPY SPR_PAL,OBJ0PAL ELSE COPY SPR_PAL,OBJ1PAL
+ 
+ 'CHECKS IF SCANLINE IS THE SAME AS Y VALUE
+  IF y <= scanline AND (y+8)>scanline THEN
+   VAR offset = (scanline AND 7)
+   DRAWTILEline TILE + (offset<<1),x,y+offset,SPR_PAL,0,testBIT(FLAGS,6)
+   IF BIG THEN
+    DRAWTILEline TILE+ (offset<<1),x,y+offset+8,SPR_PAL,0,testBIT(FLAGS,6)
+   ENDIF
+  ENDIF
+ 
+ NEXT
+END
+
+'DRAWS SCANLINE
+DEF RENDERSCAN
+ IF testBIT(GET(&HFF40),0)==0THEN RETURN
+ VAR SY = GET(&HFF42),SX = GET(&HFF43) 'GETS SCROLLX,SCROLLY
+ VAR line = GET(&HFF44),I'line IS SCANLINE
+ 'GET PIXEL
+ VAR TILEMAPBASE,TILEBASE,LCDCONT=GET(&HFF40)
+ 'TILE
+ IF testBit(LCDCONT,4)THEN
+  TILEBASE = &H8000
+ ELSE
+  TILEBASE = &H9000'SIGNED
+ ENDIF
+ 'MAP
+ IF testBit(LCDCONT,3)THEN
+  TILEMAPBASE = &H9C00
+ ELSE
+  TILEMAPBASE = &H9800
+ ENDIF
+ VAR x = SX AND 7
+ VAR y = (line+SY)AND 7'MODULO SCANLINE
+ FOR I=0TO 19
+  'line>>3 BECAUSE EACH TILE IS 8X8
+'  VAR TILE = MEM[TILEMAPBASE + (I)+(line>>3)*32]
+  VAR yOFF = ((line + SY)AND&HFF)>>3, Ip=I<<3
+'SHOULD I USE SY HERE?
+  VAR xOFFSET = ((Ip+SX)AND&HFF)>>3
+  VAR TILE = GET(TILEMAPBASE + xOFFSET + (yOFF<<5))
+  IF !testBIT(LCDCONT,4)THEN TILE = S(TILE)
+  'TILE*16 BECAUSE EACH TILE IS 16BYTES
+  'y*2 BECAUSE 8 PIXELS TAKES UP 2 BYTES
+  VAR ADDR = TILEBASE+(TILE<<4)+(y<<1)
+  'ADDR = POINTER TO TILE
+  DRAWTILEline ADDR,Ip,line,BGPAL,FALSE,FALSE
+ NEXT
+ 
+ 'DRAWS THE WINDOW
+ RENDERWINDOW
+ 
+ 'DRAWS SPRITES TO SCREEN BUFFER
+ RENDERSPRITE
+END
+
+
+DEF RENDERWINDOW
+ 'BREAK IF WINDOW IS OFF
+ IF testBIT(GET(&HFF40),5)==0THEN RETURN
+ 
+ VAR WIND_BASE,TILE_BASE=&H8800
+ 'WIND_BASE HOLD ORIGIN OF THE MAP DATA
+ 'TILE_BASE HOLD ORIGIN OF THE SPRITE DATA
+ VAR WIND_Y = GET(&HFF4A)
+ VAR WIND_X = GET(&HFF4B)-7
+ VAR scanline = GET(&HFF44)
+ VAR ISSIGNED=FALSE
+ 
+ IF testBit(GET(&HFF40),4)THEN
+  TILE_BASE = &H8000
+ ELSE
+  ISSIGNED=TRUE
+  TILE_BASE = &H9000'SIGNED
+ ENDIF
+
+ 
+ IF scanline<WIND_Y AND scanline<=144THEN RETURN
+ 
+ IF testBIT(GET(&HFF40),6)THEN WIND_BASE=&H9C00 ELSE WIND_BASE=&H9800
+
+
+ 
+ 
+ FOR X=WIND_X>>3 TO 159>>3
+  VAR SCRN_X=X AND &HFF
+  VAR Y = ((scanline + WIND_Y)AND&HFF)
+  VAR YMOD=Y AND 7
+   VAR DEL=WIND_BASE + ((Y>>3)*32) + SCRN_X-(WIND_X>>3)
+   VAR TILE = GET(DEL)
+   IF ISSIGNED THEN TILE=S(TILE)
+   VAR TILE_ADDR = TILE_BASE+(TILE<<4)+(YMOD<<1)
+   DRAWTILEline TILE_ADDR,X<<3,Y,BGPAL,FALSE,FALSE
+ NEXT
+
+ 
+END
+
+
+
+DEF REQ_INTERRUPT ID
+ HRAM[&H10F]=setBIT(GET(&HFF0F),ID)
+END
+
+DEF CHK_INTERRUPT'CHECKS IF ANY INTERRUPTS ARE SET
+VAR I
+ IF INTERRUPT_flag == 0 THEN RETURN
+ VAR FLAGS = GET(&HFF0F),ENABLED = GET(&HFFFF)
+ IF FLAGS>0 AND ENABLED>0 THEN
+  FOR I=0 TO 5
+   IF testBIT(FLAGS,I) AND testBIT(ENABLED,I)THEN 
+    INTERRUPT I
+    RETURN
+   ENDIF
+  NEXT
+ ENDIF
+END
+
+DEF INTERRUPT INT
+ INTERRUPT_flag = 0
+ isHALTED = 2
+ WRITE &HFF0F,resetBIT(GET(&HFF0F),INT)
+ 'PUSH PC ONTO STACK
+ STACK PC,0
+ IF INT==0THEN
+  PC=&H40'VBLANK
+ ELSEIF INT==1THEN
+  PC=&H48'LCD
+ ELSEIF INT==2THEN
+  PC=&H50'TIMER
+ ELSEIF INT==2THEN
+  PC=&H58'SERIAL
+ ELSEIF INT==4THEN
+  PC=&H60'JOYPAD
+ ENDIF
+END
+
+
+
+
+DEF setBIT(BIT,PLACE)
+ RETURN BIT OR (1<<PLACE)
+END
+
+DEF resetBIT(BIT,PLACE)
+ RETURN BIT AND NOT(1<<PLACE)
+END
+
+DEF testBIT(BYTE%,INDEX%)
+ RETURN (BYTE% AND (1<<INDEX%))>>INDEX%
+END
+
+DEF WRITE I,V
+ 'CHKS MEM
+ I=I AND &HFFFF
+ V=V AND &HFF
+ 'MBC1
+ IF I<=&H1FFF THEN
+  'WRITE ONLY
+  'RAM ENABLE
+  IF V!=&H0A THEN
+   MBC_RAM_ENABLE=FALSE
+  ELSE
+   MBC_RAM_ENABLE=TRUE
+  ENDIF
+  RETURN
+ ELSEIF I>=&H2000 AND I<=&H3FFFTHEN
+  'WRITE ONLY
+  'ROM BANK NUMBER (LOW BITS)
+  V = V AND &H1F
+  IF V==0 THEN V=1'IF V IS 0, THEN V=1
+
+  MBC_ROMBANK = (MBC_ROMBANK AND &H60)+V
+  MBC_ROM_OFF = MBC_ROMBANK*&H4000
+  RETURN
+ ELSEIF I>=&H4000 AND I<&H5FFFTHEN
+  'WRITE ONLY
+  'RAM BANK NUMBER (HIGH BITS 5-6)
+  IF MBC_MODE THEN
+   MBC_RAMBANK = V AND 3
+   MBC_RAM_OFF = MBC_RAMBANK*&H2000
+  ELSE
+   MBC_ROMBANK=(MBC_ROMBANK AND&H1F)OR((V AND 3)<<5)
+   MBC_ROM_OFF=MBC_ROMBANK*&H4000
+  ENDIF
+  RETURN
+ ELSEIF I>=&H6000 AND I<=&H7FFF THEN
+  'WRITE ONLY
+  'RAM/ROM SELECT
+  MBC_MODE=V AND 1
+  RETURN
+ ENDIF
+
+
+
+ IF I>=&H8000 AND I<=&H9FFF THEN
+  VRAM[I-&H8000] = V
+  RETURN
+ ELSEIF I>=&HA000 AND I<=&HBFFF THEN
+  SRAM[I-&HA000]=V
+  RETURN
+ ELSEIF I>=&HC000 AND I<=&HDFFF THEN
+  WRAM[I-&HC000]=V
+  RETURN
+ ELSEIF I>=&HE000 AND I<=&HFDFF THEN
+  WRAM[I-&HE000]=V
+  RETURN
+ ELSEIF I>=&HFE00 AND I<=&HFFFF THEN
+  HRAM[I-&HFE00]=V
+ ENDIF
+ 
+ 
+ 
+ IF I==&HFF46 THEN
+  DMAtrans V
+  RETURN
+ ELSEIF I == &HFF0F THEN
+  VAR II
+  FOR II=0TO 4
+   IF testBIT(V,II)THEN
+    REQ_INTERRUPT II
+   ENDIF
+  NEXT II
+  RETURN
+ ELSEIF I == &HFF80 THEN
+'  RETURN
+ ELSEIF I==&HFF47 THEN
+   BGPAL = GETPALETTE(V)
+ ELSEIF I==&HFF48 THEN
+   OBJ0PAL = GETPALETTE(V)
+ ELSEIF I==&HFF49 THEN
+   OBJ1PAL = GETPALETTE(V)
+ ELSEIF I==TIMCONT THEN 
+  VAR FREQ=getClockFreq()
+  'TIMCONT-&HFE00=&H107
+  HRAM[&H107]=V
+  VAR NEWfREQ=getClockFreq()
+  IF NEWfREQ != FREQ THEN setClockFreq
+  RETURN
+ ENDIF
+ 
+END
+
+
+
+DEF DMAtrans DAT
+ VAR ADDR = DAT<<8,I
+ FOR I=0TO &HA0
+  HRAM[I]=GET(ADDR+I)
+ NEXT
+END
+
+
+
+DEF REG
+ ?HEX$(PC),":",HEX$(GET(PC))
+ IF B%AND #R THEN
+'  FRAME_SKIP=6
+  VISIBLE 0,1,0,0
+  RETURN
+ ELSE
+  VISIBLE 1,1,0,0
+  FRAME_SKIP=1
+ ENDIF
+ IF B%==#L THEN VSYNC 6
+ DISPLAY 1
+ CLS
+ ?"A:";HEX$(A)
+ ?"B:";HEX$(B)
+ ?"C:";HEX$(C)
+ ?"D:";HEX$(D)
+ ?"E:";HEX$(E)
+ ?"H:";HEX$(H)
+ ?"L:";HEX$(L)
+ ?"HL:";HEX$(HL)
+ ?"MODE";gpuMODE
+ ?"CYCLES:";TOTALCYCLE
+ ?"DMA ADDR:";HEX$(GET(&HFF46))
+ ?"SCANLINE:d";GET(&HFF44)
+ ?"SCROLLX:d";GET(&HFF43)
+ ?"SCROLLY:d";GET(&HFF42)
+ ?"BUTTON:&H";HEX$(GET(&HFF00))
+ ?"ABXY:&B";BIN$(BUTTON2)
+ ?"dPAD:&B";BIN$(BUTTON1)
+ ?"FFFF:";BIN$(GET(&HFFFF))
+ ?"FF0F:";BIN$(GET(&HFF0F))
+ ?"LCDSTAT:";BIN$(GET(&HFF41))
+ ?"&HFF40:";BIN$(GET(&HFF40))
+ ?"DIV: d";DIVTIMER
+ IF !testBIT(GET(&HFF40),3)THEN ?"BG TILE MAP 9800-9BFF"ELSE ?"BG TILE MAP 9C00-9FFF"
+ IF !testBIT(GET(&HFF40),4)THEN ?"TILE SET 8800-97FF S"ELSE ?"BG TILE SET 8000-8FFF"
+ ?"ROM BANK:",HEX$(MBC_ROMBANK)
+ ?"RAM BANK:",HEX$(MBC_RAMBANK)
+ VSYNC 
+ DISPLAY 0
+END
+
+DEF FETCH
+ OPCODE=GET(PC)
+ TRACE$[T_IND]=HEX$(PC)+":"+HEX$(OPCODE)
+ T_IND=T_IND+1
+ IF T_IND>15THEN T_IND=0
+ CALL "opcode_"+HEX$(OPCODE)
+END
+
+DEF opcode_27 'DAA (ABSOLUTE LOADDDD)
+ VAR U
+ VAR FH = hc_flag, FN = sub_flag
+ VAR FC = carry_flag,
+ IF FH OR (!FN AND (A AND &HF)>9)THEN U=6
+ IF FC OR (!FN AND A >&H99)THEN U = U XOR&H60:carry_flag = 1
+ IF FN THEN U = -U
+ A = (A + U)AND&HFF
+ ZERO A
+ hc_flag = 0
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_37 'SCF
+ carry_flag = 1
+ sub_flag = 0
+ hc_flag = 0
+ SKIP 1
+ 
+ CYCLE = 4
+END
+
+DEF opcode_3F 'CCF
+ carry_flag = !carry_flag
+ sub_flag = 0
+ hc_flag = 0
+ SKIP 1
+ 
+ CYCLE = 4
+END
+
+DEF opcode_10 'STOP
+ ?"STOPPED"
+ WHILE BUTTON()==0 WEND
+ SKIP 2
+ CYCLE = 4
+END
+
+DEF opcode_76 'HALT
+ 'isHALTED IS TERNARY 0 = DISABLED
+ isHALTED = isHALTED OR 1
+ IF isHALTED==1THEN isHALTED=0 ELSE SKIP 1
+ CYCLE = 4
+END
+
+DEF Ixor V 'PARENT XOR
+ A = A XOR V
+ ZERO A
+ hc_flag = 0
+ sub_flag = 0
+ carry_flag = 0
+END
+
+DEF opcode_AF 'XOR A
+ Ixor A
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_A8 'XOR B
+ Ixor B
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_A9 'XOR C
+ Ixor C
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_AA 'XOR D
+ Ixor D
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_AB 'XOR E
+ Ixor E
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_AC 'XOR H
+ Ixor H
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_AD 'XOR L
+ Ixor L
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_AE 'XOR (HL)
+ Ixor GET(HL)
+ SKIP 1
+ CYCLE = 8
+END
+
+DEF opcode_EE 'XOR #
+ Ixor GET8IMM(PC)
+ SKIP 2
+ CYCLE = 8
+END
+
+
+
+'=============================================
+'                    DECREMENT                
+'=============================================
+
+DEF Idec8(V)
+ hc_flag = !(V AND &HF)
+ sub_flag = 1
+ V = (V - 1)AND&HFF
+ ZERO V
+ RETURN V
+END
+
+DEF opcode_3D 'DEC A 'ADD H FLAG
+ A = Idec8(A)
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_5 'DEC B
+ B = Idec8(B)
+ SKIP 1
+ _8TO16
+ CYCLE = 4
+END
+
+DEF opcode_D 'DEC C
+ C = Idec8(C)
+ SKIP 1
+ _8TO16
+ CYCLE = 4
+END
+
+DEF opcode_15 'DEC D
+ D = Idec8(D)
+ SKIP 1
+ _8TO16
+ CYCLE = 4
+END
+
+DEF opcode_1D 'DEC E
+ E = Idec8(E)
+ SKIP 1
+ _8TO16
+ CYCLE = 4
+END
+
+DEF opcode_25 'DEC H
+ H = Idec8(H)
+ SKIP 1
+ _8TO16
+ CYCLE = 4
+END
+
+DEF opcode_2D 'DEC L
+ L = Idec8(L)
+ SKIP 1
+ _8TO16
+ CYCLE = 4
+END
+
+DEF opcode_35 'DEC (HL)
+ WRITE HL,Idec8(GET(HL))
+ SKIP 1
+ CYCLE = 12
+END
+
+
+DEF opcode_18 'JR n
+ SKIP S(GET8IMM(PC))+2
+ CYCLE = 8
+END
+
+DEF opcode_20 'JR NZ,nn
+ VAR ADDR = S(GET8IMM(PC))
+ SKIP 2
+ IF !zero_flag THEN
+  SKIP ADDR
+  CYCLE = 12
+ ELSE
+  CYCLE = 8
+ ENDIF
+END
+
+DEF opcode_28 'JR Z,nn
+ VAR ADDR = S(GET8IMM(PC))
+ SKIP 2
+ IF zero_flag THEN
+  SKIP ADDR
+  CYCLE = 12
+ ELSE
+  CYCLE = 8
+ ENDIF
+END
+
+DEF opcode_30 'JR NC,nn
+ VAR ADDR = S(GET8IMM(PC))
+ SKIP 2
+ CYCLE = 8
+ IF !carry_flag THEN
+  SKIP ADDR
+  CYCLE = 12
+ ENDIF
+END
+
+DEF opcode_38 'JR C,nn
+ VAR ADDR = S(GET8IMM(PC))
+ SKIP 2
+ IF carry_flag THEN SKIP ADDR:CYCLE = 12 ELSE CYCLE = 8
+END
+
+
+'=============================================
+'                 JUMPS                       
+'=============================================
+
+
+DEF opcode_C2 'JP NZ,nn
+ VAR ADDR = GET16IMM(PC)
+ SKIP 3
+ IF !zero_flag THEN PC = ADDR:CYCLE = 16 ELSE CYCLE = 12
+END
+
+
+DEF opcode_CA 'JP Z,nn
+ VAR ADDR = GET16IMM(PC)
+ SKIP 3
+ IF zero_flag THEN PC = ADDR:CYCLE = 16 ELSE CYCLE = 12
+END
+
+DEF opcode_D2 'JP NC,nn
+ VAR ADDR = GET16IMM(PC)
+ IF !carry_flag THEN
+  PC = ADDR
+  CYCLE = 16
+ ELSE
+  SKIP 3
+  CYCLE = 12
+ ENDIF
+END
+
+DEF opcode_DA 'JP C,nn
+ VAR ADDR = GET16IMM(PC)
+ IF carry_flag THEN
+  PC = ADDR
+  CYCLE = 16
+ ELSE
+  SKIP 3
+  CYCLE = 12
+ ENDIF
+END
+
+
+DEF opcode_C3 'JP nn
+ PC = GET16IMM(PC)
+ CYCLE = 12
+END
+
+DEF opcode_E9 'JP (HL)
+ PC = HL
+ CYCLE = 4
+END
+
+
+DEF opcode_F3 'DI
+ INTERRUPT_flag = 0
+ SKIP 1
+ CYCLE = 4
+END
+
+
+DEF Icp V 'PARENT OF CP INSTRUCTION
+ zero_flag = A==V
+ carry_flag = V>A
+ sub_flag = 1
+ hc_flag = (V AND&H0F)>(A AND&H0F)
+END
+
+DEF opcode_BF 'CP A
+ Icp A
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_B8 'CP B
+ Icp B
+ SKIP 1
+ CYCLE = 4
+END
+DEF opcode_B9 'CP C
+ Icp C
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_BA 'CP D
+ Icp D
+ SKIP 1
+ CYCLE = 4
+END
+
+
+DEF opcode_BB 'CP E
+ Icp E
+ SKIP 1
+ CYCLE = 4
+END
+
+
+DEF opcode_BC 'CP H
+ Icp H
+ SKIP 1
+ CYCLE = 4
+END
+
+
+DEF opcode_BD 'CP L
+ Icp L
+ SKIP 1
+ CYCLE = 4
+END
+
+
+DEF opcode_BE 'CP (HL)
+ Icp GET(HL)
+ SKIP 1
+ CYCLE = 8
+END
+
+DEF opcode_FE 'CP #
+ Icp GET8IMM(PC)
+ SKIP 2
+ CYCLE = 8
+END
+
+
+
+DEF opcode_C4 'CALL NZ,nn
+ IF !zero_flag THEN
+  STACK PC,3
+  PC = GET16IMM(PC)
+  CYCLE = 24
+ ELSE
+  SKIP 3
+  CYCLE = 12
+ ENDIF
+END
+
+DEF opcode_CC 'CALL Z,nn
+ IF zero_flag THEN
+   STACK PC,3
+   PC = GET16IMM(PC)
+   CYCLE = 24
+  ELSE
+   SKIP 3
+   CYCLE = 12
+ ENDIF
+END
+
+DEF opcode_D4 'CALL NC,nn
+ IF !carry_flag THEN
+  STACK PC,3
+  PC = GET16IMM(PC)
+  CYCLE = 24
+ ELSE
+  SKIP 3
+  CYCLE = 12
+ ENDIF
+END
+
+DEF opcode_DC 'CALL C,nn
+ IF carry_flag THEN
+  STACK PC,3
+  PC = GET16IMM(PC)
+  CYCLE = 24
+ ELSE
+  SKIP 3
+  CYCLE = 12
+ ENDIF
+END
+
+DEF opcode_CD 'CALL nn
+ STACK PC,3
+ PC = GET16IMM(PC)
+ CYCLE = 24
+END
+
+DEF opcode_B 'DEC BC
+ BC = (BC-1)AND &HFFFF
+ SKIP 1
+ _16TO8
+ CYCLE = 8
+END
+
+DEF opcode_1B 'DEC DE
+ DE = (DE-1)AND&HFFFF
+ SKIP 1
+ _16TO8
+ CYCLE = 8
+END
+
+DEF opcode_2B 'DEC HL
+ HL = (HL-1)AND&HFFFF
+ SKIP 1
+ _16TO8
+ CYCLE = 8
+END
+
+DEF opcode_3B 'DEC SP
+ SP = (SP-1)AND&HFFFF
+ SKIP 1
+ CYCLE = 8
+END
+
+
+'=============================================
+'                   RETURN                    
+'=============================================
+
+
+DEF opcode_C9 'RET
+ PC = POPS()
+ CYCLE = 8
+END
+
+DEF opcode_C0 'RET NZ
+ IF zero_flag THEN
+  SKIP 1
+ ELSE
+  PC = POPS()
+ ENDIF
+ CYCLE = 8
+END
+
+DEF opcode_C8 'RET Z
+ IF zero_flag THEN
+  PC = POPS()
+ ELSE
+  SKIP 1
+ ENDIF
+ CYCLE = 8
+END
+
+DEF opcode_D0 'RET NC
+ IF carry_flag THEN
+  SKIP 1
+ ELSE
+  PC = POPS()
+ ENDIF
+ CYCLE = 8
+END
+
+DEF opcode_D8 'RET C
+ IF carry_flag THEN
+  PC = POPS()
+ ELSE
+  SKIP 1
+ ENDIF
+ CYCLE = 8
+END
+
+DEF opcode_D9 'RETi
+ PC = POPS()
+ changeInterruptFlag = 1
+ CYCLE = 8
+END
+
+
+
+DEF opcode_1F 'RRA
+ VAR ADDR = (carry_flag<<7)
+ carry_flag = A AND 1
+ A = (A>>1) OR ADDR
+ hc_flag = 0
+ sub_flag = 0
+ zero_flag = 0
+ SKIP 1
+ CYCLE = 4
+END
+
+
+
+DEF opcode_FB 'EI
+ changeInterruptFlag = 1
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_2F 'CPL A
+ A =  A XOR &HFF
+ sub_flag = 1
+ SKIP 1
+ CYCLE = 4
+END
+
+
+DEF opcode_CB 'CB
+ VAR ADDR = GET8IMM(PC)
+ VAR BIT = (ADDR AND &B00111000)>>3
+ VAR REG = (ADDR AND &B00000111)
+ 
+ IF (ADDR AND &HC0) == &H80THEN 'RES b,r
+  IF REG == &B111THEN 'RES X,A
+   A = resetBIT(A,BIT)
+   CYCLE = 8
+  ELSEIF REG == &B000 THEN 'RES X,B
+   B = resetBIT(B,BIT)
+   CYCLE = 8
+  ELSEIF REG == &B001 THEN 'RES X,C
+   C = resetBIT(C,BIT)
+   CYCLE = 8
+  ELSEIF REG == &B010 THEN 'RES X,D
+   D = resetBIT(D,BIT)
+   CYCLE = 8
+  ELSEIF REG == &B011 THEN 'RES X,E
+   E = resetBIT(E,BIT)
+   CYCLE = 8
+  ELSEIF REG == &B100 THEN 'RES X,H
+   H = resetBIT(H,BIT)
+   CYCLE = 8
+  ELSEIF REG == &B101 THEN 'RES X,L
+   L = resetBIT(L,BIT)
+   CYCLE = 8
+  ELSEIF REG == &B110 THEN 'RES X,(HL)
+   WRITE HL, resetBIT(GET(HL),BIT)
+   CYCLE = 16
+  ELSE
+   ?"NOT IMPLEMENTED:",HEX$(ADDR)
+   STOP
+  ENDIF
+  SKIP 2
+ ELSEIF (ADDR AND &HC0) == 64THEN 'BIT b,r
+  sub_flag = 0
+  hc_flag = 1
+  IF REG == &B111THEN 'BIT b,A
+   zero_flag = !testBIT(A,BIT)
+  ELSEIF REG == &B000THEN 'BIT b,B
+   zero_flag = !testBIT(B,BIT)
+  ELSEIF REG == &B001THEN 'BIT b,C
+   zero_flag = !testBIT(C,BIT)
+  ELSEIF REG == &B010THEN 'BIT b,D
+   zero_flag = !testBIT(D,BIT)
+  ELSEIF REG == &B011THEN 'BIT b,E
+   zero_flag = !testBIT(E,BIT)
+  ELSEIF REG == &B100THEN 'BIT b,H
+   zero_flag = !testBIT(H,BIT)
+  ELSEIF REG == &B101THEN 'BIT b,L
+   zero_flag = !testBIT(L,BIT)
+  ELSEIF REG == &B110THEN 'BIT b,(HL)
+   zero_flag = !testBIT(GET(HL),BIT)
+  ELSE
+   ?"NOT IMPLEMENTED:",HEX$(ADDR)
+   STOP
+  ENDIF
+  SKIP 2
+  CYCLE = 8
+ ELSEIF (ADDR AND &HC0)==&HC0THEN 'SET b,r
+  IF REG == &B111THEN 'SET X,A
+   A = setBIT(A,BIT)
+   CYCLE = 8
+  ELSEIF REG == &B000 THEN 'SET X,B
+   B = setBIT(B,BIT)
+   CYCLE = 8
+  ELSEIF REG == &B001 THEN 'SET X,C
+   C = setBIT(C,BIT)
+   CYCLE = 8
+  ELSEIF REG == &B010 THEN 'SET X,D
+   D = setBIT(D,BIT)
+   CYCLE = 8
+  ELSEIF REG == &B011 THEN 'SET X,E
+   E = setBIT(E,BIT)
+   CYCLE = 8
+  ELSEIF REG == &B100 THEN 'SET X,H
+   H = setBIT(H,BIT)
+   CYCLE = 8
+  ELSEIF REG == &B101 THEN 'SET X,L
+   L = setBIT(L,BIT)
+   CYCLE = 8
+  ELSEIF REG == &B110 THEN 'SET X,(HL)
+   WRITE HL, setBIT(GET(HL),BIT)
+   CYCLE = 16
+  ELSE
+   ?"RES,NOT IMPLEMENTED:",HEX$(ADDR)
+   STOP
+  ENDIF
+  SKIP 2
+ ELSE
+  CALL "opcode_CB_"+HEX$(ADDR)
+ ENDIF
+ _8TO16
+END
+
+
+
+'=============================================
+'                    RLC r                    
+'=============================================
+
+
+
+DEF Irlc(V)
+ carry_flag = (V AND &H80)>>7
+ ZERO A
+ hc_flag = 0
+ sub_flag = 0
+ RETURN (V<<1)OR carry_flag
+END
+
+DEF opcode_CB_7 'RLC A
+ A = Irlc(A)
+ SKIP 2
+ _8TO16
+ CYCLE = 8
+END
+
+DEF opcode_CB_0 'RRC B
+ B = Irlc(B)
+ SKIP 2
+ _8TO16
+ CYCLE = 8
+END
+
+DEF opcode_CB_1 'RRC C
+ C = Irlc(C)
+ SKIP 2
+ _8TO16
+ CYCLE = 8
+END
+
+DEF opcode_CB_2 'RRC D
+ D = Irlc(D)
+ SKIP 2
+ _8TO16
+ CYCLE = 8
+END
+
+DEF opcode_CB_3 'RRC E
+ E = Irlc(E)
+ SKIP 2
+ _8TO16
+ CYCLE = 8
+END
+
+DEF opcode_CB_4 'RRC H
+ H = Irlc(H)
+ SKIP 2
+ _8TO16
+ CYCLE = 8
+END
+
+DEF opcode_CB_5 'RRC L
+ L = Irlc(L)
+ SKIP 2
+ _8TO16
+ CYCLE = 8
+END
+
+DEF opcode_CB_6 'RRC (HL)
+ WRITE HL,Irlc(GET(HL))
+ SKIP 2
+ CYCLE = 8
+END
+
+
+
+
+'=============================================
+'                    RRC r                    
+'=============================================
+
+
+
+DEF Irrc(V)
+ carry_flag = V AND 1
+ ZERO A
+ hc_flag = 0
+ sub_flag = 0
+ RETURN (V>>1)OR(carry_flag<<7)
+END
+
+DEF opcode_CB_F 'RRC A
+ A = Irrc(A)
+ SKIP 2
+ _8TO16
+ CYCLE = 8
+END
+
+DEF opcode_CB_8 'RRC B
+ B = Irrc(B)
+ SKIP 2
+ _8TO16
+ CYCLE = 8
+END
+
+DEF opcode_CB_9 'RRC C
+ C = Irrc(C)
+ SKIP 2
+ _8TO16
+ CYCLE = 8
+END
+
+DEF opcode_CB_A 'RRC D
+ D = Irrc(D)
+ SKIP 2
+ _8TO16
+ CYCLE = 8
+END
+
+DEF opcode_CB_B 'RRC E
+ E = Irrc(E)
+ SKIP 2
+ _8TO16
+ CYCLE = 8
+END
+
+DEF opcode_CB_C 'RRC H
+ H = Irrc(H)
+ SKIP 2
+ _8TO16
+ CYCLE = 8
+END
+
+DEF opcode_CB_D 'RRC L
+ L = Irrc(L)
+ SKIP 2
+ _8TO16
+ CYCLE = 8
+END
+
+DEF opcode_CB_E 'RRC (HL)
+ WRITE HL,Irrc(GET(HL))
+ SKIP 2
+ CYCLE = 8
+END
+
+
+
+'=============================================
+'                   SRA N                     
+'=============================================
+
+
+DEF iSRL(V)
+ carry_flag = V AND 1
+ V = V >> 1
+ ZERO V
+ hc_flag = 0
+ sub_flag = 0
+ RETURN V
+END
+
+DEF opcode_CB_3F 'SRL A
+ A = iSRL(A)
+ CYCLE = 8
+ SKIP 2
+END
+
+DEF opcode_CB_38 'SRL B
+ B = iSRL(B)
+ CYCLE = 8
+ SKIP 2
+END
+
+DEF opcode_CB_39 'SRL C
+ C = iSRL(C)
+ CYCLE = 8
+ SKIP 2
+END
+
+DEF opcode_CB_3A 'SRL D
+ D = iSRL(D)
+ CYCLE = 8
+ SKIP 2
+END
+
+DEF opcode_CB_3B 'SRL E
+ E = iSRL(E)
+ CYCLE = 8
+ SKIP 2
+END
+
+DEF opcode_CB_3C 'SRL H
+ H = iSRL(H)
+ CYCLE = 8
+ SKIP 2
+END
+
+DEF opcode_CB_3D 'SRL L
+ L = iSRL(L)
+ CYCLE = 8
+ SKIP 2
+END
+
+DEF opcode_CB_3E 'SRL (HL)
+ WRITE HL,iSRL(GET(HL))
+ CYCLE = 16
+ SKIP 2
+END
+
+
+'=============================================
+'                   SRA N                     
+'=============================================
+
+
+DEF iSRA(V)
+ carry_flag = V AND 1
+ V = (V >> 1)OR (carry_flag<<7)
+ ZERO V
+ hc_flag = 0
+ sub_flag = 0
+ RETURN V
+END
+
+DEF opcode_CB_2F 'SRA A
+ A = iSRA(A)
+ CYCLE = 8
+ SKIP 2
+END
+
+DEF opcode_CB_28 'SRA B
+ B = iSRA(B)
+ CYCLE = 8
+ SKIP 2
+END
+
+DEF opcode_CB_29 'SRA C
+ C = iSRA(C)
+ CYCLE = 8
+ SKIP 2
+END
+
+DEF opcode_CB_2A 'SRA D
+ D = iSRA(D)
+ CYCLE = 8
+ SKIP 2
+END
+
+DEF opcode_CB_2B 'SRA E
+ E = iSRA(E)
+ CYCLE = 8
+ SKIP 2
+END
+
+DEF opcode_CB_2C 'SRA H
+ H = iSRA(H)
+ CYCLE = 8
+ SKIP 2
+END
+
+DEF opcode_CB_2D 'SRA L
+ L = iSRA(L)
+ CYCLE = 8
+ SKIP 2
+END
+
+DEF opcode_CB_2E 'SRA (HL)
+ WRITE HL,iSRA(GET(HL))
+ CYCLE = 16
+ SKIP 2
+END
+
+
+DEF opcode_CB_1F 'RR A
+ VAR ADDR = (A>>1) OR carry_flag<<7
+ carry_flag = A AND 1
+ A = ADDR
+ hc_flag = 0
+ sub_flag = 0
+ ZERO A
+ SKIP 2
+ CYCLE = 8
+END
+
+DEF opcode_CB_18 'RR B
+ VAR ADDR = (B>>1) OR carry_flag<<7
+ carry_flag = B AND 1
+ B = ADDR
+ hc_flag = 0
+ sub_flag = 0
+ ZERO B
+ _8TO16
+ SKIP 2
+ CYCLE = 8
+END
+
+DEF opcode_CB_19 'RR C
+ VAR ADDR = (C>>1) OR carry_flag<<7
+ carry_flag = C AND 1
+ C = ADDR
+ hc_flag = 0
+ sub_flag = 0
+ ZERO C
+ _8TO16
+ SKIP 2
+ CYCLE = 8
+END
+
+DEF opcode_CB_1A 'RR D
+ VAR ADDR = (D>>1) OR carry_flag<<7
+ carry_flag = D AND 1
+ D = ADDR
+ hc_flag = 0
+ sub_flag = 0
+ ZERO D
+ _8TO16
+ SKIP 2
+ CYCLE = 8
+END
+
+DEF opcode_CB_1B 'RR E
+ VAR ADDR = (E>>1) OR carry_flag<<7
+ carry_flag = E AND 1
+ E = ADDR
+ hc_flag = 0
+ sub_flag = 0
+ ZERO E
+ _8TO16
+ SKIP 2
+ CYCLE = 8
+END
+
+DEF opcode_CB_1C 'RR H
+ VAR ADDR = (H>>1) OR carry_flag<<7
+ carry_flag = H AND 1
+ H = ADDR
+ hc_flag = 0
+ sub_flag = 0
+ ZERO H
+ _8TO16
+ SKIP 2
+ CYCLE = 8
+END
+
+DEF opcode_CB_1D 'RR L
+ VAR ADDR = (L>>1) OR carry_flag<<7
+ carry_flag = L AND 1
+ L = ADDR
+ hc_flag = 0
+ sub_flag = 0
+ ZERO L
+ _8TO16
+ SKIP 2
+ CYCLE = 8
+END
+
+DEF opcode_CB_1E 'RR (HL)
+ VAR ADDR = (GET(HL)>>1) OR carry_flag<<7
+ carry_flag = GET(HL) AND 1
+ WRITE HL,ADDR
+ carry_flag = GET(HL) AND 1
+ hc_flag = 0
+ sub_flag = 0
+ ZERO GET(HL)
+ SKIP 2
+ CYCLE = 16
+END
+
+
+DEF opcode_CB_27 'SLA A
+ carry_flag = testBIT(A,7)
+ A = (A<<1)AND&HFF
+ ZERO A
+ SKIP 2
+ CYCLE = 8
+END
+
+DEF opcode_CB_20 'SLA B
+ carry_flag = testBIT(B,7)
+ B = (B<<1)AND&HFF
+ ZERO B
+ SKIP 2
+ _8TO16
+ CYCLE = 8
+END
+
+DEF opcode_CB_21 'SLA C
+ carry_flag = testBIT(C,7)
+ C = (C<<1)AND&HFF
+ ZERO C
+ SKIP 2
+ CYCLE = 8
+END
+
+DEF opcode_CB_22 'SLA D
+ carry_flag = testBIT(D,7)
+ D = (D<<1)AND&HFF
+ ZERO D
+ SKIP 2
+ CYCLE = 8
+END
+
+DEF opcode_CB_23 'SLA E
+ carry_flag = testBIT(E,7)
+ E = (E<<1)AND&HFF
+ ZERO E
+ SKIP 2
+ CYCLE = 8
+END
+
+DEF opcode_CB_24 'SLA H
+ carry_flag = testBIT(H,7)
+ H = (H<<1)AND&HFF
+ ZERO H
+ SKIP 2
+ CYCLE = 8
+END
+
+DEF opcode_CB_25 'SLA L
+ carry_flag = testBIT(L,7)
+ L = (L<<1)AND&HFF
+ ZERO L
+ SKIP 2
+ CYCLE = 8
+END
+
+DEF opcode_CB_26 'SLA (HL)
+ carry_flag = testBIT(GET(HL),7)
+ WRITE HL,GET(HL)<<1
+ ZERO GET(HL)
+ SKIP 2
+ CYCLE = 16
+END
+
+
+'=============================================
+'                  SWAP                        
+'=============================================
+
+DEF Iswap(V)
+ V = ((V AND&HF)<<4)OR((V AND&HF0)>>4)
+ ZERO V
+ carry_flag = 0
+ sub_flag = 0
+ hc_flag = 0
+ RETURN V
+END
+ 
+DEF opcode_CB_37 'SWAP A
+ A = Iswap(A)
+ ZERO A
+ SKIP 2
+ CYCLE = 8
+END
+
+DEF opcode_CB_30 'SWAP B
+ B = Iswap(B)
+ ZERO B
+ _8TO16
+ SKIP 2
+ CYCLE = 8
+END
+
+DEF opcode_CB_31 'SWAP C
+ C = Iswap(C)
+ _8TO16
+ ZERO C
+ SKIP 2
+ CYCLE = 8
+END
+
+DEF opcode_CB_32 'SWAP D
+ D = Iswap(D)
+ _8TO16
+ ZERO D
+ SKIP 2
+ CYCLE = 8
+END
+
+DEF opcode_CB_33 'SWAP E
+ E = Iswap(E)
+ _8TO16
+ ZERO E
+ SKIP 2
+ CYCLE = 8
+END
+
+DEF opcode_CB_34 'SWAP H
+ H = Iswap(H)ZERO H
+ _8TO16
+ SKIP 2
+ CYCLE = 8
+END
+
+DEF opcode_CB_35 'SWAP L
+ L = Iswap(L)
+ _8TO16
+ SKIP 2
+ CYCLE = 8
+END
+
+DEF opcode_CB_36 'SWAP (HL)
+ WRITE HL,Iswap(GET(HL))
+ SKIP 2
+ CYCLE = 16
+END
+
+
+'=============================================
+'                  ROTATES                    
+'=============================================
+
+DEF opcode_F 'RRCA
+ carry_flag = A AND 1
+ A = (A>>1) OR (carry_flag<<7)
+ ZERO A
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_7 'RLCA
+ carry_flag = testBIT(A,7)
+ A = ((A<<1)AND &HFF) OR carry_flag
+ ZERO A
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_17 'RLA
+ VAR ADDR = testBIT(A,7)
+ A = ((A << 1)OR carry_flag)AND&HFF
+ carry_flag = ADDR
+ hc_flag = 0
+ sub_flag = 0
+ zero_flag = 0
+ SKIP 1
+ CYCLE = 4
+END
+
+
+'=============================================
+'                     RL                      
+'=============================================
+
+
+
+
+DEF iRL(V)
+ VAR ADDR = testBIT(C,7)
+ V = ((V << 1) OR carry_flag)AND&HFF
+ carry_flag = ADDR
+ hc_flag = 0
+ sub_flag = 0
+ ZERO V
+ RETURN V
+END
+
+DEF opcode_CB_17 'RL A
+ A = iRL(A)
+ SKIP 2
+ CYCLE = 8
+END
+
+DEF opcode_CB_10 'RL B
+ B = iRL(B)
+ _8TO16
+ SKIP 2
+ CYCLE = 8
+END
+
+DEF opcode_CB_11 'RL C
+ C = iRL(C)
+ _8TO16
+ SKIP 2
+ CYCLE = 8
+END
+
+
+DEF opcode_CB_12 'RL D
+ D = iRL(D)
+ _8TO16
+ SKIP 2
+ CYCLE = 8
+END
+
+DEF opcode_CB_13 'RL E
+ E = iRL(E)
+ _8TO16
+ SKIP 2
+ CYCLE = 8
+END
+
+DEF opcode_CB_14 'RL H
+ H = iRL(H)
+ _8TO16
+ SKIP 2
+ CYCLE = 8
+END
+
+DEF opcode_CB_15 'RL L
+ L = iRL(L)
+ _8TO16
+ SKIP 2
+ CYCLE = 8
+END
+
+DEF opcode_CB_16 'RL (HL)
+ WRITE HL,iRL(GET(HL))
+ _8TO16
+ SKIP 2
+ CYCLE = 16
+END
+
+
+DEF Ior V
+ A = A OR V
+ ZERO A
+ hc_flag = 0
+ sub_flag = 0
+ carry_flag = 0
+END
+
+DEF opcode_B7 'OR A
+ Ior A
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_B0 'OR B
+ Ior B
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_B1 'OR C
+ Ior C
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_B2 'OR D
+ Ior D
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_B3 'OR E
+ Ior E
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_B4 'OR H
+ Ior H
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_B5 'OR L
+ Ior L
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_B6 'OR (HL)
+ Ior GET(HL)
+ SKIP 1
+ CYCLE = 8
+END
+
+
+DEF opcode_F6 'OR #
+ Ior GET8IMM(PC)
+ SKIP 2
+ CYCLE = 8
+END
+
+
+
+
+'=============================================
+'                 RST                         
+'=============================================
+
+
+
+DEF opcode_C7 'RST &H00
+ STACK PC,1
+ PC = &H00
+ CYCLE = 32
+END
+
+DEF opcode_CF 'RST &H08
+ STACK PC,1
+ PC = &H08
+ CYCLE = 32
+END
+
+DEF opcode_D7 'RST &H10
+ STACK PC,1
+ PC = &H10
+ CYCLE = 32
+END
+
+DEF opcode_DF 'RST &H18
+ STACK PC,1
+ PC = &H18
+ CYCLE = 32
+END
+
+DEF opcode_E7 'RST &H20
+ STACK PC,1
+ PC = &H20
+ CYCLE = 32
+END
+
+DEF opcode_EF 'RST &H28
+ STACK PC,1
+ PC = &H28
+ CYCLE = 32
+END
+
+DEF opcode_F7 'RST &H30
+ STACK PC,1
+ PC = &H30
+ CYCLE = 32
+END
+
+DEF opcode_FF 'RST &H38
+ STACK PC,1
+ PC = &H38
+ CYCLE = 32
+END
+
+
+
+DEF opcode_7F 'LD A,A
+ SKIP 1
+ CYCLE = 4
+END
+
+
+'=============================================
+'1.8bitLoads         LD nn,n                  
+'=============================================
+
+
+DEF opcode_6 'LD B,n
+ B = GET8IMM(PC)
+ _8TO16
+ SKIP 2
+ CYCLE = 8
+END
+
+DEF opcode_E 'LD C,n
+ C = GET8IMM(PC)
+ _8TO16
+ SKIP 2
+ CYCLE = 8
+END
+
+DEF opcode_16 'LD D,n
+ D = GET8IMM(PC)
+ _8TO16
+ SKIP 2
+ CYCLE = 8
+END
+
+DEF opcode_1E 'LD E,n
+ E = GET8IMM(PC)
+ _8TO16
+ SKIP 2
+ CYCLE = 8
+END
+
+DEF opcode_26 'LD H,n
+ H = GET8IMM(PC)
+ _8TO16
+ SKIP 2
+ CYCLE = 8
+END
+
+DEF opcode_2E 'LD L,n
+ L = GET8IMM(PC)
+ _8TO16
+ SKIP 2
+ CYCLE = 8
+END
+
+
+'=============================================
+'2.8bitLoads         LD nn,n                  
+'=============================================
+
+
+DEF opcode_40 'LD B,B
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_41 'LD B,C
+ B = C
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+
+DEF opcode_42 'LD B,D
+ B = D
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+
+DEF opcode_43  'LD B,E
+ B = E
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_44  'LD B,H
+ B = H
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_45  'LD B,L
+ B = L
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_46  'LD B,(HL)
+ B = GET(HL)
+ _8TO16
+ SKIP 1
+ CYCLE = 8
+END
+
+DEF opcode_48  'LD C,B
+ C = B
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_49  'LD C,C
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_4A  'LD C,D
+ C = D
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_4B  'LD C,E
+ C = E
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_4C  'LD C,H
+ C = H
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_4D  'LD C,L
+ C = L
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_4E  'LD C,(HL)
+ C = GET(HL)AND &HFF
+ _8TO16
+ SKIP 1
+ CYCLE = 8
+END
+
+
+DEF opcode_50  'LD D,B
+ D = B
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_51  'LD D,C
+ D = C
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_52  'LD D,D
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_53 'LD D,E
+ D = E
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_54  'LD D,H
+ D = H
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_55  'LD D,L
+ D = L
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_56  'LD D,(HL)
+ D = GET(HL)AND &HFF
+ _8TO16
+ SKIP 1
+ CYCLE = 8
+END
+
+DEF opcode_58  'LD E,B
+ E = B
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_59  'LD E,C
+ E = C
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_5A  'LD E,D
+ E = D
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_5B  'LD E,E
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_5C  'LD E,H
+ E = H
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_5D  'LD E,L
+ E = L
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_5E  'LD E,(HL)
+ E = GET(HL)
+ _8TO16
+ SKIP 1
+ CYCLE = 8
+END
+
+DEF opcode_60  'LD H,B
+ H = B
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_61  'LD H,C
+ H = C
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_62  'LD H,D
+ H = D
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_63  'LD H,E
+ H = E
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_64  'LD H,H
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_65  'LD H,L
+ H = L
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_66  'LD H,(HL)
+ H = GET(HL)AND &HFF
+ _8TO16
+ SKIP 1
+ CYCLE = 8
+END
+
+DEF opcode_68  'LD L,B
+ L = B
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_69  'LD L,C
+ L = C
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_6A  'LD L,D
+ L = D
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_6B  'LD L,E
+ L = E
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_6C  'LD L,H
+ L = H
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_6D  'LD L,L
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_6E  'LD L,(HL)
+ L = GET(HL)AND &HFF
+ _8TO16
+ SKIP 1
+ CYCLE = 8
+END
+
+DEF opcode_70  'LD (HL),B
+ WRITE HL, B
+ SKIP 1
+ CYCLE = 8
+END
+
+DEF opcode_71  'LD (HL),C
+ WRITE HL, C
+ SKIP 1
+ CYCLE = 8
+END
+
+DEF opcode_72  'LD (HL),D
+ WRITE HL, D
+ SKIP 1
+ CYCLE = 8
+END
+
+DEF opcode_73  'LD (HL),E
+ WRITE HL, E
+ SKIP 1
+ CYCLE = 8
+END
+
+DEF opcode_74  'LD (HL),H
+ WRITE HL, H
+ SKIP 1
+ CYCLE = 8
+END
+
+DEF opcode_75  'LD (HL),L
+ WRITE HL, L
+ SKIP 1
+ CYCLE = 8
+END
+
+DEF opcode_36  'LD (HL),n
+ WRITE HL, GET8IMM(PC)
+ SKIP 2
+ CYCLE = 12
+END
+
+
+
+
+
+'=============================================
+'3.8bitLoads          LD A,n                  
+'=============================================
+
+
+DEF opcode_78 'LD A,B
+ A = B
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_79 'LD A,C
+ A = C
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_7A 'LD A,D
+ A = D
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_7B 'LD A,E
+ A = E
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_7C 'LD A,H
+ A = H
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_7D 'LD A,L
+ A = L
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_A 'LD A,(BC)
+ A = GET(BC)
+ SKIP 1
+ CYCLE = 8
+END
+
+DEF opcode_1A 'LD A,(DE)
+ A = GET(DE)
+ SKIP 1
+ CYCLE = 8
+END
+
+DEF opcode_7E 'LD A,(HL)
+ A = GET(HL)
+ SKIP 1
+ CYCLE = 8
+END
+
+DEF opcode_FA 'LD A,(nn)
+ A = GET(GET16IMM(PC))
+ SKIP 3
+ CYCLE = 16
+END
+
+DEF opcode_3E 'LD A,#
+ A = GET8IMM(PC)
+ SKIP 2
+ CYCLE = 8
+END
+
+
+'=============================================
+'4.8bitLoads          LD n,A                  
+'=============================================
+
+
+DEF opcode_47 'LD B,A
+ B = A
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_4F 'LD C,A
+ C = A
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_57 'LD D,A
+ D = A
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_5F 'LD E,A
+ E = A
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_67 'LD H,A
+ H = A
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_6F 'LD L,A
+ L = A
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_2 'LD (BC),A
+ WRITE BC, A
+ SKIP 1
+ CYCLE = 8
+END
+
+DEF opcode_12 'LD (DE),A
+ WRITE DE, A
+ SKIP 1
+ CYCLE = 8
+END
+
+DEF opcode_77 'LD (HL),A
+ WRITE HL, A
+ SKIP 1
+ CYCLE = 8
+END
+
+DEF opcode_EA 'LD (nn),A
+ WRITE GET16IMM(PC), A
+ SKIP 3
+ CYCLE = 16
+END
+
+
+'=============================================
+'5./6.8bitLoads  LD (C),A/LD A,(C)            
+'=============================================
+
+
+DEF opcode_F2 'LD A,(C)
+ A = GET(&HFF00+C)
+ SKIP 1
+ CYCLE = 8
+END
+
+DEF opcode_E2 'LD (C),A
+ WRITE &HFF00+C, A
+ SKIP 1
+ CYCLE = 8
+END
+
+
+'=============================================
+'7.20.8bitLoads LDD A,(HL)                   8./9./10./11./12./13./14./15./16./17./18./19./20
+'=============================================
+
+DEF opcode_3A 'LDD A,(HL)
+ A = GET(HL)
+ HL = (HL-1)AND &HFFFF
+ _16TO8
+ SKIP 1
+ CYCLE = 8
+END
+
+DEF opcode_32 'LDD (HL),A
+ WRITE HL, A
+ HL = (HL-1)AND &HFFFF
+ _16TO8
+ SKIP 1
+ CYCLE = 8
+END
+
+DEF opcode_2A 'LDI A,(HL)
+ A = GET(HL)
+ HL = (HL+1)AND &HFFFF
+ _16TO8
+ SKIP 1
+ CYCLE = 8
+END
+
+DEF opcode_22 'LDI (HL),A
+ WRITE HL, A
+ HL = (HL+1)AND &HFFFF
+ _16TO8
+ SKIP 1
+ CYCLE = 8
+END
+
+DEF opcode_E0 'LDH (&HFF00+n),A
+ WRITE &HFF00 + GET8IMM(PC), A
+ SKIP 2
+ CYCLE = 12
+END
+
+DEF opcode_F0 'LDH A,(&HFF00+n)
+ A = GET(&HFF00 + GET8IMM(PC))
+ SKIP 2
+ CYCLE = 12
+END
+
+
+'=============================================
+'1./2.16bitLoads    LD n,nn                   
+'=============================================
+
+DEF opcode_8 'LD (nn),SP
+ WRITE GET16IMM(PC),SP
+ SKIP 3
+ CYCLE = 20
+END
+
+DEF opcode_1 'LD BC,nn
+ BC = GET16IMM(PC)
+ _16TO8
+ SKIP 3
+ CYCLE = 12
+END
+
+DEF opcode_11 'LD DE,nn
+ DE = GET16IMM(PC)
+ _16TO8
+ SKIP 3
+ CYCLE = 12
+END
+
+DEF opcode_21 'LD HL,nn
+ HL = GET16IMM(PC)
+ _16TO8
+ SKIP 3
+ CYCLE = 12
+END
+
+DEF opcode_31 'LD SP,nn
+ SP = GET16IMM(PC)
+ SKIP 3
+ CYCLE = 12
+END
+
+DEF opcode_F9 'LD SP,HL
+ SP = HL
+ SKIP 1
+ CYCLE = 8
+END
+
+DEF opcode_F8 'LD HL,SP+n
+ HL = (SP + S(GET8IMM(PC)))AND&HFFFF
+ zero_flag = 0
+ sub_flag = 0
+ _16TO8
+ SKIP 2
+ CYCLE = 12
+END
+
+'=============================================
+'NC=0        AND                              
+'=============================================
+
+DEF Iand V 'PARENT OF AND
+ A = A AND V
+ ZERO A
+ carry_flag = 0
+ sub_flag = 0
+ hc_flag = 1
+END
+
+DEF opcode_A7 'AND A
+ ZERO A
+ carry_flag = 0
+ sub_flag = 0
+ hc_flag = 1
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_A0 'AND B
+ Iand B
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_A1 'AND C
+ Iand C
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_A2 'AND D
+ Iand D
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_A3 'AND E
+ Iand E
+ SKIP 1
+ CYCLE = 4
+END
+
+
+DEF opcode_A4 'AND H
+ Iand H
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_A5 'AND L
+ Iand L
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_A6 'AND (HL)
+ Iand GET(HL)
+ SKIP 1
+ CYCLE = 8
+END
+
+DEF opcode_E6 'AND #
+ Iand GET8IMM(PC)
+ SKIP 2
+ CYCLE = 8
+END
+
+
+'=============================================
+'1.8bitALU        ADD                         
+'=============================================
+
+
+DEF opcode_87 'ADD A
+ carry_flag = (A+A)>&HFF
+ hc_flag = (A AND&HF) + (A AND&HF)>&HF
+ A = (A + A) AND &HFF
+ ZERO A
+ sub_flag = 0
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_80 'ADD B
+ carry_flag = (A+B)>&HFF
+ hc_flag = (A AND&HF) + (B AND&HF)>&HF
+ A = (A + B) AND &HFF
+ ZERO A
+ sub_flag = 0
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_81 'ADD C
+ carry_flag = (A+C)>&HFF
+ hc_flag = (A AND&HF) + (C AND&HF)>&HF
+ A = (A + C) AND &HFF
+ ZERO A
+ sub_flag = 0
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_82 'ADD D
+ carry_flag = (A+D)>&HFF
+ hc_flag = (A AND&HF) + (D AND&HF)>&HF
+ A = (A + D) AND &HFF
+ ZERO A
+ sub_flag = 0
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_83 'ADD E
+ carry_flag = (A+E)>&HFF
+ hc_flag = (A AND&HF) + (E AND&HF)>&HF
+ A = (A + E) AND &HFF
+ ZERO A
+ sub_flag = 0
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_84 'ADD H
+ carry_flag = (A+H)>&HFF
+ hc_flag = (A AND&HF) + (H AND&HF)>&HF
+ A = (A + H) AND &HFF
+ ZERO A
+ sub_flag = 0
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_85 'ADD L
+ carry_flag = (A+L)>&HFF
+ hc_flag = (A AND&HF) + (L AND&HF)>&HF
+ A = (A + L) AND &HFF
+ ZERO A
+ sub_flag = 0
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_86 'ADD (HL)
+ carry_flag = (A+GET(HL))>&HFF
+ hc_flag = (A AND&HF) + (GET(HL) AND&HF)>&HF
+ A = (A + GET(HL)) AND &HFF
+ ZERO A
+ sub_flag = 0
+ SKIP 1
+ CYCLE = 8
+END
+
+DEF opcode_C6 'ADD #
+ VAR ADDR=GET8IMM(PC)
+ carry_flag = (A+ADDR)>&HFF
+ hc_flag = (A AND&HF) + (ADDR AND&HF)>&HF
+ A = (A + ADDR) AND &HFF
+ sub_flag = 0
+ ZERO A
+ SKIP 2
+ CYCLE = 8
+END
+
+
+DEF Isbc8 V
+ V = V + carry_flag
+ sub_flag = 1
+ carry_flag = V>A
+ hc_flag = (V AND&H0F) > (A AND&H0F)
+ A = (A - V) AND &HFF
+END
+
+DEF opcode_9F 'SBC A,A
+ A=0
+ sub_flag = 1
+ hc_flag = 0
+ zero_flag = 1
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_98 'SBC A,B
+ Isbc8 B
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_99 'SBC A,C
+ Isbc8 C
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_9A 'SBC A,D
+ Isbc8 D
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_9B 'SBC A,E
+ Isbc8 E
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_9C 'SBC A,H
+ Isbc8 H
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_9D 'SBC A,L
+ Isbc8 L
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_9E 'SBC A,(HL)
+ Isbc8 GET(HL)
+ SKIP 1
+ CYCLE = 8
+END
+
+
+DEF opcode_DE 'SBC A,#
+ VAR ADDR = A-GET8IMM(PC)-carry_flag
+ carry_flag = A>GET8IMM(PC)
+ A = ADDR
+ ZERO A
+ sub_flag = 1
+ SKIP 1
+ CYCLE = 8
+END
+
+'=============================================
+'1.8bitALU           SUB                      
+'=============================================
+
+DEF Isub V 'PARENT SUB
+ sub_flag = 1
+ carry_flag = V > A
+ hc_flag = (V AND&H0F) > (V AND&H0F)
+ A = (A - V)AND &HFF
+ ZERO A
+END
+
+DEF opcode_97 'SUB A
+ Isub A
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_90 'SUB B
+ Isub B
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_91 'SUB C
+ Isub C
+ ZERO A
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_92 'SUB D
+ Isub D
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_93 'SUB E
+ Isub E
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_94 'SUB H
+ Isub H
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_95 'SUB L
+ Isub L
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_96 'SUB (HL)
+ Isub GET(HL)
+ SKIP 1
+ CYCLE = 8
+END
+
+DEF opcode_D6 'SUB #
+ Isub GET8IMM(PC)
+ SKIP 2
+ CYCLE = 8
+END
+
+
+'=============================================
+'1.16bitALU          ADD  +16BITCARRY                   
+'=============================================
+
+
+DEF opcode_9 'ADD HL,BC
+ VAR ADDR=testBIT(HL,11)
+ carry_flag = (HL+BC)>&HFFFF
+ hc_flag = (HL AND &HFFF)+ (BC AND &HFFF)>&HFFF
+ HL = (HL + BC)AND&HFFFF
+ _16TO8
+ sub_flag = 0
+ SKIP 1
+ CYCLE = 8
+END
+
+DEF opcode_19 'ADD HL,DE
+ carry_flag = (HL+DE)>&HFFFF
+ hc_flag = (HL AND &HFFF)+ (DE AND &HFFF)>&HFFF
+ HL = (HL + DE)AND&HFFFF
+ _16TO8
+ sub_flag = 0
+ SKIP 1
+ CYCLE = 8
+END
+
+DEF opcode_29 'ADD HL,HL
+ carry_flag = (HL<<1)>&HFFFF
+ hc_flag = ((HL AND &HFFF)<<1)>&HFFF
+ HL = (HL<<1)AND&HFFFF
+ _16TO8
+ sub_flag = 0
+ SKIP 1
+ CYCLE = 8
+END
+
+
+'=============================================
+'1.8bitARI         ADD                        
+'=============================================
+
+DEF Iinc(V) 'PARENT INC
+ hc_flag = (V AND&HF)==&HF
+ V = (V + 1)AND&HFF
+ ZERO V
+ sub_flag = 0
+ RETURN V
+END
+
+DEF opcode_3C 'INC A
+ A = Iinc(A)
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_4 'INC B
+ B = Iinc(B)
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_C 'INC C
+ C = Iinc(C)
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_14 'INC D
+ D = Iinc(D)
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_1C 'INC E
+ E = Iinc(E)
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_24 'INC H
+ H = Iinc(H)
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_2C 'INC L
+ L = Iinc(L)
+ _8TO16
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_34 'INC (HL)
+ WRITE HL,Iinc(GET(HL))
+ SKIP 1
+ CYCLE = 12
+END
+
+
+'=============================================
+'1.16bitARI        ADD                        
+'=============================================
+
+
+DEF opcode_3 'INC BC
+ BC = (BC+1) AND&HFFFF
+ _16TO8
+ SKIP 1
+ CYCLE = 8
+END
+
+DEF opcode_13 'INC DE
+ DE = (DE+1) AND&HFFFF
+ _16TO8
+ SKIP 1
+ CYCLE = 8
+END
+
+DEF opcode_23 'INC HL
+ HL = (HL+1) AND&HFFFF
+ _16TO8
+ SKIP 1
+ CYCLE = 8
+END
+
+DEF opcode_33 'INC SP
+ SP = (SP+1) AND&HFFFF
+ SKIP 1
+ CYCLE = 8
+END
+
+
+'=============================================
+'7.16bitLoads       PUSH                      
+'=============================================
+
+
+DEF opcode_F5 'PUSH AF
+ F = (zero_flag<<7)OR (sub_flag<<6)OR (hc_flag<<5)OR(carry_flag<<4)
+ AF = (A<<8) OR (F AND&HF0)
+ STACK AF,0
+ SKIP 1
+ CYCLE = 16
+END
+
+DEF opcode_C5 'PUSH BC
+ STACK BC,0
+ SKIP 1
+ CYCLE = 16
+END
+
+DEF opcode_D5 'PUSH DE
+ STACK DE,0
+ SKIP 1
+ CYCLE = 16
+END
+
+DEF opcode_E5 'PUSH HL
+ STACK HL,0
+ SKIP 1
+ CYCLE = 16
+END
+
+
+
+
+'=============================================
+'7.16bitLoads        POP                      
+'=============================================
+
+DEF opcode_F1 'POP AF
+ AF = POPS()
+ F = AF AND &H00F0
+ zero_flag = testBIT(F,7)
+ sub_flag  = testBIT(F,6)
+ hc_flag   = testBIT(F,5)
+ carry_flag= testBIT(F,4)
+ A = (AF>>8)AND&HFF
+ SKIP 1
+ CYCLE = 12
+END
+
+DEF opcode_C1 'POP BC
+ BC = POPS()
+ _16TO8
+ SKIP 1
+ CYCLE = 12
+END
+
+DEF opcode_D1 'POP DE
+ DE = POPS()
+ _16TO8
+ SKIP 1
+ CYCLE = 12
+END
+
+DEF opcode_E1 'POP HL
+ HL = POPS()
+ SKIP 1
+ _16TO8
+ CYCLE = 12
+END
+
+DEF opcode_0 'NOP
+ CYCLE = 4
+ SKIP 1
+END
+
+DEF Iadc8 V
+ V = V + carry_flag
+ carry_flag = (A+V)>&HFF
+' zero_flag = A == V
+ hc_flag = (A AND&HF)+(V AND&HF)>&H0F
+ sub_flag = 1
+ A = (A + V)AND&HFF
+ ZERO A
+END
+
+DEF opcode_88 'ADC A,B
+ Iadc8 B
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_89 'ADC A,C
+ Iadc8 C
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_8A 'ADC A,D
+ Iadc8 D
+ SKIP 1
+ CYCLE = 4
+END
+
+
+DEF opcode_8B 'ADC A,E
+ Iadc8 E
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_8C 'ADC A,H
+ Iadc8 H
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_8D 'ADC A,L
+ Iadc8 L
+ SKIP 1
+ CYCLE = 4
+END
+
+DEF opcode_8E 'ADC A,(HL)
+ Iadc8 GET(HL)
+ SKIP 1
+ CYCLE = 8
+END
+
+DEF opcode_CE 'ADC A,#
+ Iadc8 GET8IMM(PC)
+ SKIP 2
+ CYCLE = 8
+ _8TO16
+END
+
+
+
+
+DEF _8TO16
+ HL = ((H<<8)OR L) AND &HFFFF
+ BC = ((B<<8)OR C) AND &HFFFF
+ DE = ((D<<8)OR E) AND &HFFFF
+END
+
+
+DEF _16TO8
+ H = HL>>8
+ L= HL AND &HFF
+ B = BC>>8
+ C= BC AND &HFF
+ D = DE>>8
+ E= DE AND &HFF
+END
+
+DEF GET(I)'READ FROM MEMORY
+ IF I>=&H4000 AND I<=&H7FFFTHEN
+  RETURN GME[MBC_ROM_OFF+(I AND&H3FFF)]
+ ELSEIF I>=&HA000 AND I<=&HBFFFTHEN
+  RETURN SRAM[MBC_RAM_OFF+(I AND&H1FFF)]
+ ENDIF
+ 
+ IF I==&HFF00THEN
+  VAR V=HRAM[I-&HFE00] AND &H30
+  IF V==&H30 THEN
+   RETURN &HFF
+  ELSEIF!(V AND &H10)THEN
+   RETURN BUTTON1
+  ELSEIF !(V AND &H20)THEN
+   RETURN BUTTON2
+  ELSEIF !(V AND &H30) THEN
+   RETURN 0
+  ELSE
+   RETURN &HFF
+  ENDIF
+ ELSEIF I==&HFF04THEN
+  RETURN DIVTIMER
+ ELSE
+  IF I<&H7FFF THEN
+   RETURN GME[I]
+  ELSEIF I>=&H8000 AND I<=&H9FFF THEN
+   RETURN VRAM[I-&H8000]
+  ELSEIF I>=&HA000 AND I<=&HBFFF THEN
+   RETURN SRAM[I-&HA000]
+  ELSEIF I>=&HC000 AND I<=&HDFFF THEN
+   RETURN WRAM[I-&HC000]
+  ELSEIF I>=&HE000 AND I<=&HFDFF THEN
+   RETURN WRAM[I-&HE000]
+ ELSEIF I>=&HFE00 AND I<=&HFFFF THEN
+   RETURN HRAM[I-&HFE00]
+  ENDIF
+ ENDIF
+END
+
+DEF S(V)
+ RETURN V-256*(V>=128)
+END
+
+DEF GET16IMM(I)
+ RETURN (GET(I+2)<<8) OR GET(I+1)
+END
+
+DEF GET8IMM(I)
+ RETURN GET(I+1)AND&HFF
+END
+
+
+'PUSH STACK (16bit)
+DEF STACK V,L 'VALUE,LENGTH OF CURRENT INSTRUCTION
+ INC V,L
+ DEC SP,2
+ WRITE SP,(V) AND &HFF
+ WRITE SP+1,(V>>8)AND&HFF
+END
+
+
+'POP STACK (16bit)
+DEF POPS()
+ VAR ADD = (GET(SP+1)<<8)OR GET(SP)
+ INC SP,2
+ RETURN ADD
+END
+
+
+DEF SKIP V
+ PC = PC + V
+END
+
+DEF ZERO V
+ zero_flag = V==0
+END
+
+
+DEF LOAD_ROM ROMNAME$
+ VAR I
+ DIM ROM[0]
+ LOAD "DAT:"+ROMNAME$,ROM,FALSE
+ FOR I=0 TO MIN(LEN(ROM),LEN(GME)/4)-1
+  UNPACK ROM[I],GME,I<<2
+ NEXT I
+END
+
+DEF UNPACK INT%,OUTPUT%[],START%
+ VAR I%
+ FOR I%=0 TO 3
+  OUTPUT%[START%+I%]=(INT%>>(I%<<3))AND&HFF
+ NEXT
+END
+
+
+
+DEF MEMMAP
+ CLS
+ VISIBLE 1,1,1,1
+ VAR Y,O=PC
+ WHILE 1
+  FOR Y=0TO 28
+   LOCATE 0,Y:?HEX$(O+Y)+":"+HEX$(GET(O+Y))
+   LOCATE 30,28?"PC:",HEX$(O)
+ NEXT
+ VSYNC 1
+ B% = BUTTON(2)
+ IF B% AND #DOWN  THEN INC O
+ IF B% AND #UP  THEN DEC O
+WEND
+END
+
+'REMOVE
+DEF DUMP PTR
+ VISIBLE 1,1,1,1
+ GOSUB @DRAW
+
+ VAR II
+ WHILE 1
+ LOCATE 20,0?HEX$(PTR)
+  IF BUTTON()==#RIGHT THEN PTR=PTR+16GOSUB @DRAW
+  IF BUTTON()==#LEFT THEN PTR=PTR-16GOSUB @DRAW
+ WEND
+ RETURN
+ @DRAW
+ FOR Y=0 TO 6
+  FOR X=0TO 9
+   FOR II=0TO 7
+   DRAWTILEline PTR+II*2+(X*16)+(Y*16*9),X*8,II+Y*8,BGPAL,FALSE,FALSE
+   NEXT II
+  NEXT X
+ NEXT Y
+ GLOAD 118,47,160,144,SCREEN,PALETTE,1
+ VSYNC
+ RETURN
+END
+
+DEF BREAKPOINTS
+ VAR I
+ FOR I = 0 TO LEN(BRKPTS)-1
+  IF PC==BRKPTS[I]THEN ?HEX$(PC):STOP
+ NEXT I
+END
+
+DEF NEW_BREAKPOINT V
+ PUSH BRKPTS,V
+END
+
+DEF PRNT
+ VAR I
+ FOR I=0TO LEN(TRACE$)-1
+  ?TRACE$[I]
+ NEXT
+END
+
+DEF DRWOAM
+ FOR Y=0 TO 153
+  WRITE &HFF44,Y
+  RENDERSPRITES
+ NEXT Y
+ GLOAD 118,47,160,144,SCREEN,PALETTE,1
+END
+
