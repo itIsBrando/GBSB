@@ -1,6 +1,8 @@
 # GBSB
 Unfinished Gameboy Emulator for SmileBASIC
 
+## This is more of a proof of concept. Development has been terminated. As a result, this repo will be archived.
+
 It can play some ROMs at an unplayably slow speed
 
 Use SmileBASIC File Manager to transfer this file and your legally made ROMs which you obtained legally.
